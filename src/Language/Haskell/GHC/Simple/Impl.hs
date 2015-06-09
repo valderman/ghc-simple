@@ -1,7 +1,9 @@
 {-# LANGUAGE FlexibleInstances, CPP, PatternGuards #-}
 -- | Lower level building blocks for custom code generation.
 module Language.Haskell.GHC.Simple.Impl (
-    Compile (..), StgModule, PkgKey,
+    Compile (..),
+    Ghc, StgModule, PkgKey,
+    liftIO,
     toSimplifiedStg,
     toSimplifiedCore,
     toModGuts,
@@ -33,8 +35,7 @@ import Language.Haskell.GHC.Simple.Types
 
 -- | Any type we can generate intermediate code for.
 class Compile a where
-  -- | Generate some sort of code from a Haskell module.
-  --   Optimizations and other GHC settings, decided by 'DynFlags'.
+  -- | Generate some sort of code (or other output) from a Haskell module.
   toCode :: DynFlags -> ModSummary -> Ghc a
 
 type StgModule = CompiledModule [StgBinding]
