@@ -1,17 +1,26 @@
 name:                ghc-simple
 version:             0.1.0.0
 synopsis:            Simplified interface to the GHC API.
--- description:         
+description:         The GHC API is a great tool for working with Haskell code.
+                     Unfortunately, it's also fairly opaque and hard to get
+                     started with. This library abstracts away the intricacies
+                     of working with the GHC API, giving a general, no-nonsense
+                     way to extract highly optimized (or not, depending on your
+                     use case) Core, STG, custom intermediate code, and other
+                     information from Haskell code.
 homepage:            https://github.com/valderman/ghc-simple
 license:             MIT
 license-file:        LICENSE
 author:              Anton Ekblad
 maintainer:          anton@ekblad.cc
--- copyright:           
+copyright:           (c) 2015 Anton Ekblad
 category:            Development
 build-type:          Simple
--- extra-source-files:  
 cabal-version:       >=1.10
+
+source-repository head
+  type:     git
+  location: https://github.com/valderman/ghc-simple.git
 
 library
   exposed-modules:
@@ -22,7 +31,7 @@ library
   other-extensions:
     CPP, PatternGuards, FlexibleInstances
   build-depends:
-    ghc          >= 7.8,
+    ghc          >=7.8,
     base         >=4.7 && <4.9,
     ghc-paths    >=0.1 && <0.2,
     data-default >=0.5 && <0.6
