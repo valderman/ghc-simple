@@ -26,6 +26,7 @@ library
   exposed-modules:
     Language.Haskell.GHC.Simple,
     Language.Haskell.GHC.Simple.Impl
+    Language.Haskell.GHC.Simple.PrimIface
   other-modules:       
     Language.Haskell.GHC.Simple.Types
   other-extensions:

@@ -30,6 +30,7 @@ import ErrUtils
 import Bag
 import SrcLoc
 import Outputable
+import Hooks
 
 -- Convenience re-exports for fiddling with STG
 import StgSyn
@@ -51,6 +52,8 @@ import Module
 -- Misc. stuff
 import GHC.Paths (libdir)
 import Data.IORef
+import Control.Monad
+import Language.Haskell.GHC.Simple.PrimIface as Simple.PrimIface
 import Language.Haskell.GHC.Simple.Types as Simple.Types
 import Language.Haskell.GHC.Simple.Impl
 
@@ -92,12 +95,21 @@ genericCompile comp cfg files = do
     (flags, _staticwarns) <- parseStaticFlags $ map noLoc (cfgGhcFlags cfg)
     warns <- newIORef []
     runGhc (maybe (Just libdir) Just (cfgGhcLibDir cfg)) $ do
+
+      -- Parse and update dynamic flags
       dfs <- getSessionDynFlags
       (dfs', files2, _dynwarns) <- parseDynamicFlags dfs flags
       let dfs'' = cfgUpdateDynFlags cfg $ dfs' {
                       log_action = logger (log_action dfs') warns
                     }
-      _ <- setSessionDynFlags dfs''
+
+      -- Update prim interface hook name and cache if we're using a custom
+      -- GHC.Prim interface, setting the dynflags in the process.
+      case cfgCustomPrimIface cfg of
+        Just (nfo, strs) -> setPrimIface dfs'' nfo strs
+        _                -> void $ setSessionDynFlags dfs''
+
+      -- Generate code and report results
       ecode <- genCode (toCompiledModule comp) (files ++ map unLoc files2)
       ws <- liftIO $ readIORef warns
       case ecode of
@@ -113,6 +125,12 @@ genericCompile comp cfg files = do
               compWarnings = ws
             }
   where
+    setPrimIface dfs nfo strs = do
+      void $ setSessionDynFlags dfs {
+          hooks = (hooks dfs) {ghcPrimIfaceHook = Just $ primIface nfo strs}
+        }
+      getSession >>= liftIO . fixPrimopTypes nfo strs
+
     logger deflog warns dfs severity srcspan style msg
       | cfgUseGhcErrorLogger cfg = do
         logger' deflog warns dfs severity srcspan style msg

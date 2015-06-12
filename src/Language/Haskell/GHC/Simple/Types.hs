@@ -5,7 +5,7 @@ module Language.Haskell.GHC.Simple.Types (
     -- Configuration
     CompConfig,
     cfgGhcFlags, cfgUseTargetsFromFlags, cfgUpdateDynFlags, cfgGhcLibDir,
-    cfgUseGhcErrorLogger,
+    cfgUseGhcErrorLogger, cfgCustomPrimIface,
 
     -- Results and errors
     CompiledModule (..),
@@ -19,6 +19,7 @@ module Language.Haskell.GHC.Simple.Types (
 import GHC
 
 -- Misc. stuff
+import Language.Haskell.GHC.Simple.PrimIface
 import Data.Default
 
 data CompConfig = CompConfig {
@@ -63,7 +64,15 @@ data CompConfig = CompConfig {
     --   of the system's default GHC compiler will be used.
     --
     --   Default: @Nothing@
-    cfgGhcLibDir :: Maybe FilePath
+    cfgGhcLibDir :: Maybe FilePath,
+
+    -- | 
+    --   This is useful if you want to, for instance, fake a 32 bit
+    --   architecture on a 64 bit host.
+    --
+    --   Default: @Nothing@
+    cfgCustomPrimIface :: Maybe (PrimOp -> PrimOpInfo,
+                                 PrimOp -> Arity -> StrictSig)
   }
 
 instance Default CompConfig where
