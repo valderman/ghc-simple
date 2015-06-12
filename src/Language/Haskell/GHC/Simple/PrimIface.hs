@@ -13,7 +13,9 @@
 --   If you are *not* making a cross compiler, chances are you will not want to
 --   touch this with a ten foot pole.
 module Language.Haskell.GHC.Simple.PrimIface (
-    PrimOp (..), PrimOpInfo (..), StrictSig, Arity,
+    module Demand, module TysWiredIn, module FastString, module CmmType,
+    module BasicTypes,
+    PrimOp (..), PrimOpInfo (..),
     mkGenPrimOp, mkDyadic, mkMonadic, mkCompare,
     primIface, fixPrimopTypes
   ) where
@@ -37,6 +39,7 @@ import Avail
 import MkId (seqId)
 import Data.IORef (modifyIORef')
 import TyCon
+import CmmType
 
 #if __GLASGOW_HASKELL__ < 710
 setCallArityInfo :: IdInfo -> Arity -> IdInfo
