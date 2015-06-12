@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 -- | Facilities for using a custom GHC.Prim interface.
 --   The simplest way to use this is to generate primop interface involves
 --   using the @genprimopcode@ program from GHC, making any desired changes
@@ -36,6 +37,11 @@ import Avail
 import MkId (seqId)
 import Data.IORef (modifyIORef')
 import TyCon
+
+#if __GLASGOW_HASKELL__ < 710
+setCallArityInfo :: IdInfo -> Arity -> IdInfo
+setCallArityInfo i _ = i
+#endif
 
 -- | Module interface for @GHC.Prim@, with the given function applied to each
 --   primop.
