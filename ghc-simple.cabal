@@ -1,5 +1,5 @@
 name:                ghc-simple
-version:             0.1.0.0
+version:             0.1.1.0
 synopsis:            Simplified interface to the GHC API.
 description:         The GHC API is a great tool for working with Haskell code.
                      Unfortunately, it's also fairly opaque and hard to get
