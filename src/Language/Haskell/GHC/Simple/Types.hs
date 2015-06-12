@@ -66,9 +66,11 @@ data CompConfig = CompConfig {
     --   Default: @Nothing@
     cfgGhcLibDir :: Maybe FilePath,
 
-    -- | 
-    --   This is useful if you want to, for instance, fake a 32 bit
-    --   architecture on a 64 bit host.
+    -- | Use a custom interface for @GHC.Prim@.
+    --   This is useful if you want to, for instance, compile to a 32 bit
+    --   target architecture on a 64 bit host.
+    --
+    --   For more information, see "Language.Haskell.GHC.Simple.PrimIface".
     --
     --   Default: @Nothing@
     cfgCustomPrimIface :: Maybe (PrimOp -> PrimOpInfo,
@@ -81,7 +83,8 @@ instance Default CompConfig where
       cfgUseTargetsFromFlags = True,
       cfgUpdateDynFlags      = id,
       cfgUseGhcErrorLogger   = False,
-      cfgGhcLibDir           = Nothing
+      cfgGhcLibDir           = Nothing,
+      cfgCustomPrimIface     = Nothing
     }
 
 -- | Compiler output and metadata for a given module.
