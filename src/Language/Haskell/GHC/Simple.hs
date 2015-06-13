@@ -64,7 +64,7 @@ compile :: Compile a
         -- ^ List of compilation targets. A target can be either a module
         --   or a file name.
         -> IO (CompResult a)
-compile = compileWith def
+compile = compileWith defaultConfig
 
 -- | Compile a list of targets and their dependencies using a custom
 --   configuration.

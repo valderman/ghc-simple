@@ -1,9 +1,8 @@
 -- | Config, input and output types for the simplified GHC API.
 module Language.Haskell.GHC.Simple.Types (
-    Default (..),
-    
     -- Configuration
     CompConfig,
+    defaultConfig,
     cfgGhcFlags, cfgUseTargetsFromFlags, cfgUpdateDynFlags, cfgGhcLibDir,
     cfgUseGhcErrorLogger, cfgCustomPrimIface,
 
@@ -15,12 +14,8 @@ module Language.Haskell.GHC.Simple.Types (
     compSuccess
   ) where
 
--- GHC imports
 import GHC
-
--- Misc. stuff
 import Language.Haskell.GHC.Simple.PrimIface
-import Data.Default
 
 data CompConfig = CompConfig {
     -- | GHC command line flags to control the Haskell to STG compilation
@@ -77,15 +72,16 @@ data CompConfig = CompConfig {
                                  PrimOp -> Arity -> StrictSig)
   }
 
-instance Default CompConfig where
-  def = CompConfig {
-      cfgGhcFlags            = [],
-      cfgUseTargetsFromFlags = True,
-      cfgUpdateDynFlags      = id,
-      cfgUseGhcErrorLogger   = False,
-      cfgGhcLibDir           = Nothing,
-      cfgCustomPrimIface     = Nothing
-    }
+-- | Default configuration.
+defaultConfig :: CompConfig
+defaultConfig = CompConfig {
+    cfgGhcFlags            = [],
+    cfgUseTargetsFromFlags = True,
+    cfgUpdateDynFlags      = id,
+    cfgUseGhcErrorLogger   = False,
+    cfgGhcLibDir           = Nothing,
+    cfgCustomPrimIface     = Nothing
+  }
 
 -- | Compiler output and metadata for a given module.
 data CompiledModule a = CompiledModule {
