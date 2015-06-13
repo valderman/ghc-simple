@@ -1,14 +1,19 @@
 {-# LANGUAGE CPP #-}
 -- | Facilities for using a custom GHC.Prim interface.
---   The simplest way to use this is to generate primop interface involves
+--
+--   The simplest(?) way to use this is to generate primop info
 --   using the @genprimopcode@ program from GHC, making any desired changes
 --   to those files, and passing the @primOpInfo@ and @primOpStrictness@
 --   functions defined therein as the @cfgCustomPrimIface@ member of
 --   your config.
 --
---   This is probably what you want if you are making a cross compiler, to
---   prevent the types of GHC primops from changing depending on the compiler
---   host platform.
+--   Your strictness and info functions need to support all the
+--   primops exported by the GHC version in use, making code written for this
+--   interface rather less portable than code using the rest of @ghc-simple@.
+--
+--   This functionality is probably what you want if you are making a cross
+--   compiler, to prevent the types of GHC primops from changing depending on
+--   the compiler host platform.
 --
 --   If you are *not* making a cross compiler, chances are you will not want to
 --   touch this with a ten foot pole.
