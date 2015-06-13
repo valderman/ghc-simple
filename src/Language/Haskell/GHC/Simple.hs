@@ -1,12 +1,12 @@
 {-# LANGUAGE CPP, PatternGuards #-}
 -- | Simplified interface to the GHC API.
 module Language.Haskell.GHC.Simple (
-    -- Configuration, input and output types
+    -- * Configuration, input and output types
     module Simple.Types,
     Compile,
     StgModule,
 
-    -- GHC re-exports needed to meaningfully process STG and Core.
+    -- * GHC re-exports for processing STG and Core
     module CoreSyn, module StgSyn, module Module,
     module Id, module IdInfo, module Var, module Literal, module DataCon,
     module OccName, module Name,
@@ -17,7 +17,7 @@ module Language.Haskell.GHC.Simple (
     PkgKey,
     pkgKeyString, modulePkgKey,
     
-    -- Entry points
+    -- * Entry points
     compile, compileWith, genericCompile
   ) where
 
