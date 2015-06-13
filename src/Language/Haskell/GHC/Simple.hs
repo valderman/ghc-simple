@@ -1,6 +1,9 @@
 {-# LANGUAGE CPP, PatternGuards #-}
 -- | Simplified interface to the GHC API.
 module Language.Haskell.GHC.Simple (
+    -- * Entry points
+    compile, compileWith, genericCompile,
+
     -- * Configuration, input and output types
     module Simple.Types,
     Compile,
@@ -15,10 +18,7 @@ module Language.Haskell.GHC.Simple (
     module DynFlags, module SrcLoc,
     ModSummary (..), ModGuts (..),
     PkgKey,
-    pkgKeyString, modulePkgKey,
-    
-    -- * Entry points
-    compile, compileWith, genericCompile
+    pkgKeyString, modulePkgKey
   ) where
 
 -- GHC scaffolding
