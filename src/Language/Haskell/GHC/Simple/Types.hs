@@ -12,7 +12,7 @@ module Language.Haskell.GHC.Simple.Types (
     CompResult (..),
     Error (..),
     Warning (..),
-    ghcSuccess
+    compSuccess
   ) where
 
 -- GHC imports
@@ -163,6 +163,6 @@ data CompResult a
     }
 
 -- | Does the given 'CompResult' represent a successful compilation?
-ghcSuccess :: CompResult a -> Bool
-ghcSuccess (Success {}) = True
-ghcSuccess _            = False
+compSuccess :: CompResult a -> Bool
+compSuccess (Success {}) = True
+compSuccess _            = False
