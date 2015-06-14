@@ -2,7 +2,7 @@
 -- | Simplified interface to the GHC API.
 module Language.Haskell.GHC.Simple (
     -- * Entry points
-    compile, compileWith, genericCompile,
+    compile, compileWith, compileFold,
 
     -- * Configuration, input and output types
     module Simple.Types,
@@ -63,35 +63,42 @@ compile :: Compile a
         => [String]
         -- ^ List of compilation targets. A target can be either a module
         --   or a file name.
-        -> IO (CompResult a)
+        -> IO (CompResult [CompiledModule a])
 compile = compileWith defaultConfig
 
 -- | Compile a list of targets and their dependencies using a custom
 --   configuration.
 compileWith :: Compile a
-            => CompConfig
+            => CompConfig a
             -- ^ GHC pipeline configuration.
             -> [String]
             -- ^ List of compilation targets. A target can be either a module
             --   or a file name. Targets may also be read from the specified
             --   'CompConfig', if 'cfgUseTargetsFromFlags' is set.
-            -> IO (CompResult a)
-compileWith = genericCompile toCode
+            -> IO (CompResult [CompiledModule a])
+compileWith cfg = compileFold (cfg {cfgGhcPipeline = toCode}) consMod []
 
--- | Compile a list of targets and their dependencies using a custom
---   configuration and compilation function in the 'Ghc' monad. See
---   "Language.Haskell.GHC.Simple.Impl" for more information about building
---   custom compilation functions.
-genericCompile :: (DynFlags -> ModSummary -> Ghc a)
-               -- ^ Compilation function.
-               -> CompConfig
-               -- ^ GHC pipeline configuration.
-               -> [String]
-               -- ^ List of compilation targets. A target can be either a module
-               --   or a file name. Targets may also be read from the specified
-               --   'CompConfig', if 'cfgUseTargetsFromFlags' is set.
-               -> IO (CompResult a)
-genericCompile comp cfg files = do
+consMod :: [CompiledModule a] -> CompiledModule a -> IO [CompiledModule a]
+consMod xs x = return (x:xs)
+
+-- | Left fold over a list of compilation targets and their dependencies.
+--
+--   Sometimes you don't just want a huge pile of intermediate code lying
+--   around; chances are you either want to dump it to file or combine it with
+--   some other intermediate code, without having to keep it all in memory at
+--   the same time.
+compileFold :: CompConfig b
+            -- ^ GHC pipeline configuration.
+            -> (a -> CompiledModule b -> IO a)
+            -- ^ Compilation function.
+            -> a
+            -- ^ Initial accumulator.
+            -> [String]
+            -- ^ List of compilation targets. A target can be either a module
+            --   or a file name. Targets may also be read from the specified
+            --   'CompConfig', if 'cfgUseTargetsFromFlags' is set.
+            -> IO (CompResult a)
+compileFold cfg comp acc files = do
     (flags, _staticwarns) <- parseStaticFlags $ map noLoc (cfgGhcFlags cfg)
     warns <- newIORef []
     runGhc (maybe (Just libdir) Just (cfgGhcLibDir cfg)) $ do
@@ -110,7 +117,7 @@ genericCompile comp cfg files = do
         _                -> void $ setSessionDynFlags dfs''
 
       -- Generate code and report results
-      ecode <- genCode (toCompiledModule comp) (files ++ map unLoc files2)
+      ecode <- genCode ghcPipeline comp acc (files ++ map unLoc files2)
       ws <- liftIO $ readIORef warns
       case ecode of
         Right (finaldfs, code) ->
@@ -125,6 +132,8 @@ genericCompile comp cfg files = do
               compWarnings = ws
             }
   where
+    ghcPipeline = toCompiledModule $ cfgGhcPipeline cfg
+
     setPrimIface dfs nfo strs = do
       void $ setSessionDynFlags dfs {
           hooks = (hooks dfs) {ghcPrimIfaceHook = Just $ primIface nfo strs}
@@ -156,10 +165,12 @@ genericCompile comp cfg files = do
 -- | Map a compilation function over each 'ModSummary' in the dependency graph
 --   of a list of targets.
 genCode :: GhcMonad m
-         => (DynFlags -> ModSummary -> m a)
+         => (ModSummary -> m a)
+         -> (b -> a -> IO b)
+         -> b
          -> [String]
-         -> m (Either [Error] (DynFlags, [a]))
-genCode comp files = do
+         -> m (Either [Error] (DynFlags, b))
+genCode comp usercomp acc files = do
     dfs <- getSessionDynFlags
     merrs <- handleSourceError (maybeErrors dfs) $ do
       ts <- mapM (flip guessTarget Nothing) files
@@ -170,7 +181,7 @@ genCode comp files = do
       Just errs -> return $ Left errs
       _         -> do
         mss <- depanal [] False
-        code <- mapM (comp dfs . noLog) mss
+        code <- foldM (\a x -> comp (noLog x) >>= liftIO . usercomp a) acc mss
         return $ Right (dfs, code)
   where
     -- We logged everything when we did @load@, we don't want to do it twice.

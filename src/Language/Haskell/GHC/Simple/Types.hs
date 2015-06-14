@@ -1,12 +1,13 @@
 -- | Config, input and output types for the simplified GHC API.
 module Language.Haskell.GHC.Simple.Types (
-    -- Configuration
+    -- * GHC pipeline configuration
+    Compile (..),
     CompConfig,
     defaultConfig,
     cfgGhcFlags, cfgUseTargetsFromFlags, cfgUpdateDynFlags, cfgGhcLibDir,
-    cfgUseGhcErrorLogger, cfgCustomPrimIface,
+    cfgUseGhcErrorLogger, cfgCustomPrimIface, cfgGhcPipeline,
 
-    -- Results and errors
+    -- * Compilation results and errors
     CompiledModule (..),
     CompResult (..),
     Error (..),
@@ -17,7 +18,14 @@ module Language.Haskell.GHC.Simple.Types (
 import GHC
 import Language.Haskell.GHC.Simple.PrimIface
 
-data CompConfig = CompConfig {
+-- | Any type we can generate intermediate code for.
+class Compile a where
+  -- | Generate some sort of code (or other output) from a Haskell module.
+  toCode :: ModSummary -> Ghc a
+
+-- | GHC pipeline configuration, parameterized over the intermediate code
+--   produced by the pipeline.
+data CompConfig a = CompConfig {
     -- | GHC command line flags to control the Haskell to STG compilation
     --   pipeline. Both static and dynamic flags may be set here.
     --   For instance, passing @["-O2", "-DHELLO"]@ here is equivalent to
@@ -69,18 +77,27 @@ data CompConfig = CompConfig {
     --
     --   Default: @Nothing@
     cfgCustomPrimIface :: Maybe (PrimOp -> PrimOpInfo,
-                                 PrimOp -> Arity -> StrictSig)
+                                 PrimOp -> Arity -> StrictSig),
+
+    -- | Use a custom GHC pipeline to generate intermediate code. Useful if
+    --   the provided instances for @[StgBinding]@ etc. don't quite do what you
+    --   want them to. See "Language.Haskell.GHC.Simple.Impl" for more
+    --   information about custom pipelines.
+    --
+    --   Default: @toCode@
+    cfgGhcPipeline :: ModSummary -> Ghc a
   }
 
 -- | Default configuration.
-defaultConfig :: CompConfig
+defaultConfig :: Compile a => CompConfig a
 defaultConfig = CompConfig {
     cfgGhcFlags            = [],
     cfgUseTargetsFromFlags = True,
     cfgUpdateDynFlags      = id,
     cfgUseGhcErrorLogger   = False,
     cfgGhcLibDir           = Nothing,
-    cfgCustomPrimIface     = Nothing
+    cfgCustomPrimIface     = Nothing,
+    cfgGhcPipeline         = toCode
   }
 
 -- | Compiler output and metadata for a given module.
@@ -141,7 +158,7 @@ data Warning = Warning {
 data CompResult a
   = Success {
       -- | Result of the compilation.
-      compResult :: [CompiledModule a],
+      compResult :: a,
 
       -- | Warnings that occurred during compilation.
       compWarnings :: [Warning],

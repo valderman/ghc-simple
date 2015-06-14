@@ -33,20 +33,15 @@ import qualified Module as M (modulePackageKey, packageKeyString, PackageKey)
 import Control.Monad
 import Language.Haskell.GHC.Simple.Types
 
--- | Any type we can generate intermediate code for.
-class Compile a where
-  -- | Generate some sort of code (or other output) from a Haskell module.
-  toCode :: DynFlags -> ModSummary -> Ghc a
-
 type StgModule = CompiledModule [StgBinding]
 instance Compile [StgBinding] where
   toCode = toSimplifiedStg
 
 instance Compile CgGuts where
-  toCode = const toSimplifiedCore
+  toCode = toSimplifiedCore
 
 instance Compile ModGuts where
-  toCode = const toModGuts
+  toCode = toModGuts
 
 -- | Package ID/key of a module.
 modulePkgKey :: Module -> PkgKey
@@ -71,12 +66,11 @@ pkgKeyString = M.packageKeyString
 -- | Compile a 'ModSummary' into a module with metadata using a custom
 --   compilation function.
 toCompiledModule :: GhcMonad m
-                 => (DynFlags -> ModSummary -> m a)
-                 -> DynFlags
+                 => (ModSummary -> m a)
                  -> ModSummary
                  -> m (CompiledModule a)
-toCompiledModule comp dfs ms = do
-  code <- comp dfs ms
+toCompiledModule comp ms = do
+  code <- comp ms
   ts <- getTargets
   return $ CompiledModule {
       modSummary        = ms,
@@ -101,8 +95,9 @@ isTargetOf t ms =
 -- | Compile a 'ModSummary' into a list of simplified 'StgBinding's.
 --   See <https://ghc.haskell.org/trac/ghc/wiki/Commentary/Compiler/StgSynType>
 --   for more information about STG and how it relates to core and Haskell.
-toSimplifiedStg :: GhcMonad m => DynFlags -> ModSummary -> m [StgBinding]
-toSimplifiedStg dfs ms =
+toSimplifiedStg :: GhcMonad m => ModSummary -> m [StgBinding]
+toSimplifiedStg ms = do
+  dfs <- getSessionDynFlags
   toSimplifiedCore ms >>= prepare dfs ms >>= toStgBindings dfs ms
 
 -- | Compile a 'ModSummary' into a 'CgGuts', containing all information about
