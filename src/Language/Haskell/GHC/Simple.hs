@@ -56,6 +56,8 @@ import Control.Monad
 import Language.Haskell.GHC.Simple.PrimIface as Simple.PrimIface
 import Language.Haskell.GHC.Simple.Types as Simple.Types
 import Language.Haskell.GHC.Simple.Impl
+import Control.Concurrent.MVar
+import System.IO.Unsafe
 
 -- | Compile a list of targets and their dependencies into intermediate code.
 --   Uses settings from the the default 'CompConfig'.
@@ -86,7 +88,7 @@ consMod xs x = return (x:xs)
 getDynFlagsForConfig :: CompConfig a -> IO (DynFlags, [String])
 getDynFlagsForConfig cfg = do
   ws <- newIORef []
-  (flags, _staticwarns) <- parseStaticFlags $ map noLoc (cfgGhcFlags cfg)
+  flags <- getStaticFlags cfg
   runGhc (maybe (Just libdir) Just (cfgGhcLibDir cfg)) $ do
     setDFS cfg flags ws
 
@@ -159,7 +161,7 @@ compileFold :: CompConfig b
             --   'CompConfig', if 'cfgUseTargetsFromFlags' is set.
             -> IO (CompResult a)
 compileFold cfg comp acc files = do
-    (flags, _staticwarns) <- parseStaticFlags $ map noLoc (cfgGhcFlags cfg)
+    flags <- getStaticFlags cfg
     warns <- newIORef []
     runGhc (maybe (Just libdir) Just (cfgGhcLibDir cfg)) $ do
       (_, files2) <- setDFS cfg flags warns
@@ -179,6 +181,22 @@ compileFold cfg comp acc files = do
             }
   where
     ghcPipeline = toCompiledModule $ cfgGhcPipeline cfg
+
+{-# NOINLINE staticFlags #-}
+staticFlags :: MVar (Maybe [Located String])
+staticFlags = unsafePerformIO $ newMVar Nothing
+
+getStaticFlags :: CompConfig a -> IO [Located String]
+getStaticFlags cfg = do
+  sfs <- takeMVar staticFlags
+  case sfs of
+    Just fs -> do
+      putMVar staticFlags sfs
+      return fs
+    _       -> do
+      (fs, _warns) <- parseStaticFlags (map noLoc $ cfgGhcFlags cfg)
+      putMVar staticFlags (Just fs)
+      return fs
 
 -- | Map a compilation function over each 'ModSummary' in the dependency graph
 --   of a list of targets.
