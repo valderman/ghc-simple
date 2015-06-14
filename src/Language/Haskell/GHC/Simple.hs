@@ -7,6 +7,7 @@ module Language.Haskell.GHC.Simple (
     -- * Configuration, input and output types
     module Simple.Types,
     StgModule,
+    getDynFlagsForConfig,
 
     -- * GHC re-exports for processing STG and Core
     module CoreSyn, module StgSyn, module Module,
@@ -80,65 +81,37 @@ compileWith cfg = compileFold (cfg {cfgGhcPipeline = toCode}) consMod []
 consMod :: [CompiledModule a] -> CompiledModule a -> IO [CompiledModule a]
 consMod xs x = return (x:xs)
 
--- | Left fold over a list of compilation targets and their dependencies.
---
---   Sometimes you don't just want a huge pile of intermediate code lying
---   around; chances are you either want to dump it to file or combine it with
---   some other intermediate code, without having to keep it all in memory at
---   the same time.
-compileFold :: CompConfig b
-            -- ^ GHC pipeline configuration.
-            -> (a -> CompiledModule b -> IO a)
-            -- ^ Compilation function.
-            -> a
-            -- ^ Initial accumulator.
-            -> [String]
-            -- ^ List of compilation targets. A target can be either a module
-            --   or a file name. Targets may also be read from the specified
-            --   'CompConfig', if 'cfgUseTargetsFromFlags' is set.
-            -> IO (CompResult a)
-compileFold cfg comp acc files = do
-    (flags, _staticwarns) <- parseStaticFlags $ map noLoc (cfgGhcFlags cfg)
-    warns <- newIORef []
-    runGhc (maybe (Just libdir) Just (cfgGhcLibDir cfg)) $ do
+-- | Obtain the dynamic flags and extra targets that would be used to compile
+--   anything with the given config.
+getDynFlagsForConfig :: CompConfig a -> IO (DynFlags, [String])
+getDynFlagsForConfig cfg = do
+  ws <- newIORef []
+  (flags, _staticwarns) <- parseStaticFlags $ map noLoc (cfgGhcFlags cfg)
+  runGhc (maybe (Just libdir) Just (cfgGhcLibDir cfg)) $ do
+    setDFS cfg flags ws
 
-      -- Parse and update dynamic flags
-      dfs <- getSessionDynFlags
-      (dfs', files2, _dynwarns) <- parseDynamicFlags dfs flags
-      let dfs'' = cfgUpdateDynFlags cfg $ dfs' {
-                      log_action = logger (log_action dfs') warns
-                    }
+-- | Set and return the appropriate dynflags and extra targets for the given
+--   config.
+setDFS :: CompConfig a     -- ^ Compilation configuration.
+       -> [Located String] -- ^ Flags from 'parseStaticFlags'.
+       -> IORef [Warning]  -- ^ IORef to use for logging warnings.
+       -> Ghc (DynFlags, [String])
+setDFS cfg flags warns = do
+    -- Parse and update dynamic flags
+    dfs <- getSessionDynFlags
+    (dfs', files2, _dynwarns) <- parseDynamicFlags dfs flags
+    let dfs'' = cfgUpdateDynFlags cfg $ dfs' {
+                    log_action = logger (log_action dfs') warns
+                  }
 
-      -- Update prim interface hook name and cache if we're using a custom
-      -- GHC.Prim interface, setting the dynflags in the process.
-      case cfgCustomPrimIface cfg of
-        Just (nfo, strs) -> setPrimIface dfs'' nfo strs
-        _                -> void $ setSessionDynFlags dfs''
-
-      -- Generate code and report results
-      ecode <- genCode ghcPipeline comp acc (files ++ map unLoc files2)
-      ws <- liftIO $ readIORef warns
-      case ecode of
-        Right (finaldfs, code) ->
-          return Success {
-              compResult = code,
-              compWarnings = ws,
-              compDynFlags = finaldfs
-            }
-        Left es ->
-          return Failure {
-              compErrors = es,
-              compWarnings = ws
-            }
+    -- Update prim interface hook name and cache if we're using a custom
+    -- GHC.Prim interface, setting the dynflags in the process.
+    case cfgCustomPrimIface cfg of
+      Just (nfo, strs) -> setPrimIface dfs'' nfo strs
+      _                -> void $ setSessionDynFlags dfs''
+    finaldfs <- getSessionDynFlags
+    return (finaldfs, map unLoc files2)
   where
-    ghcPipeline = toCompiledModule $ cfgGhcPipeline cfg
-
-    setPrimIface dfs nfo strs = do
-      void $ setSessionDynFlags dfs {
-          hooks = (hooks dfs) {ghcPrimIfaceHook = Just $ primIface nfo strs}
-        }
-      getSession >>= liftIO . fixPrimopTypes nfo strs
-
     logger deflog warns dfs severity srcspan style msg
       | cfgUseGhcErrorLogger cfg = do
         logger' deflog warns dfs severity srcspan style msg
@@ -160,6 +133,52 @@ compileFold cfg comp acc files = do
       return ()
     logger' output _ dfs sev srcspan style msg = do
       output dfs sev srcspan style msg
+
+    setPrimIface dfs nfo strs = do
+      void $ setSessionDynFlags dfs {
+          hooks = (hooks dfs) {ghcPrimIfaceHook = Just $ primIface nfo strs}
+        }
+      getSession >>= liftIO . fixPrimopTypes nfo strs
+
+
+-- | Left fold over a list of compilation targets and their dependencies.
+--
+--   Sometimes you don't just want a huge pile of intermediate code lying
+--   around; chances are you either want to dump it to file or combine it with
+--   some other intermediate code, without having to keep it all in memory at
+--   the same time.
+compileFold :: CompConfig b
+            -- ^ GHC pipeline configuration.
+            -> (a -> CompiledModule b -> IO a)
+            -- ^ Compilation function.
+            -> a
+            -- ^ Initial accumulator.
+            -> [String]
+            -- ^ List of compilation targets. A target can be either a module
+            --   or a file name. Targets may also be read from the specified
+            --   'CompConfig', if 'cfgUseTargetsFromFlags' is set.
+            -> IO (CompResult a)
+compileFold cfg comp acc files = do
+    (flags, _staticwarns) <- parseStaticFlags $ map noLoc (cfgGhcFlags cfg)
+    warns <- newIORef []
+    runGhc (maybe (Just libdir) Just (cfgGhcLibDir cfg)) $ do
+      (_, files2) <- setDFS cfg flags warns
+      ecode <- genCode ghcPipeline comp acc (files ++ files2)
+      ws <- liftIO $ readIORef warns
+      case ecode of
+        Right (finaldfs, code) ->
+          return Success {
+              compResult = code,
+              compWarnings = ws,
+              compDynFlags = finaldfs
+            }
+        Left es ->
+          return Failure {
+              compErrors = es,
+              compWarnings = ws
+            }
+  where
+    ghcPipeline = toCompiledModule $ cfgGhcPipeline cfg
 
 -- | Map a compilation function over each 'ModSummary' in the dependency graph
 --   of a list of targets.
