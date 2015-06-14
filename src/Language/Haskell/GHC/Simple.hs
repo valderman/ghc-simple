@@ -31,6 +31,7 @@ import Bag
 import SrcLoc
 import Outputable
 import Hooks
+import StaticFlags (discardStaticFlags)
 
 -- Convenience re-exports for fiddling with STG
 import StgSyn
@@ -56,7 +57,6 @@ import Control.Monad
 import Language.Haskell.GHC.Simple.PrimIface as Simple.PrimIface
 import Language.Haskell.GHC.Simple.Types as Simple.Types
 import Language.Haskell.GHC.Simple.Impl
-import Control.Concurrent.MVar
 import System.IO.Unsafe
 
 -- | Compile a list of targets and their dependencies into intermediate code.
@@ -86,22 +86,21 @@ consMod xs x = return (x:xs)
 -- | Obtain the dynamic flags and extra targets that would be used to compile
 --   anything with the given config.
 getDynFlagsForConfig :: CompConfig a -> IO (DynFlags, [String])
-getDynFlagsForConfig cfg = do
+getDynFlagsForConfig cfg = initStaticFlags `seq` do
   ws <- newIORef []
-  flags <- getStaticFlags cfg
   runGhc (maybe (Just libdir) Just (cfgGhcLibDir cfg)) $ do
-    setDFS cfg flags ws
+    setDFS cfg (discardStaticFlags (cfgGhcFlags cfg)) ws
 
 -- | Set and return the appropriate dynflags and extra targets for the given
 --   config.
 setDFS :: CompConfig a     -- ^ Compilation configuration.
-       -> [Located String] -- ^ Flags from 'parseStaticFlags'.
+       -> [String]         -- ^ Dynamic GHC command line flags.
        -> IORef [Warning]  -- ^ IORef to use for logging warnings.
        -> Ghc (DynFlags, [String])
 setDFS cfg flags warns = do
     -- Parse and update dynamic flags
     dfs <- getSessionDynFlags
-    (dfs', files2, _dynwarns) <- parseDynamicFlags dfs flags
+    (dfs', files2, _dynwarns) <- parseDynamicFlags dfs (map noLoc flags)
     let dfs'' = cfgUpdateDynFlags cfg $ dfs' {
                     log_action = logger (log_action dfs') warns
                   }
@@ -160,11 +159,10 @@ compileFold :: CompConfig b
             --   or a file name. Targets may also be read from the specified
             --   'CompConfig', if 'cfgUseTargetsFromFlags' is set.
             -> IO (CompResult a)
-compileFold cfg comp acc files = do
-    flags <- getStaticFlags cfg
+compileFold cfg comp acc files = initStaticFlags `seq` do
     warns <- newIORef []
     runGhc (maybe (Just libdir) Just (cfgGhcLibDir cfg)) $ do
-      (_, files2) <- setDFS cfg flags warns
+      (_, files2) <- setDFS cfg (discardStaticFlags (cfgGhcFlags cfg)) warns
       ecode <- genCode ghcPipeline comp acc (files ++ files2)
       ws <- liftIO $ readIORef warns
       case ecode of
@@ -182,21 +180,10 @@ compileFold cfg comp acc files = do
   where
     ghcPipeline = toCompiledModule $ cfgGhcPipeline cfg
 
-{-# NOINLINE staticFlags #-}
-staticFlags :: MVar (Maybe [Located String])
-staticFlags = unsafePerformIO $ newMVar Nothing
-
-getStaticFlags :: CompConfig a -> IO [Located String]
-getStaticFlags cfg = do
-  sfs <- takeMVar staticFlags
-  case sfs of
-    Just fs -> do
-      putMVar staticFlags sfs
-      return fs
-    _       -> do
-      (fs, _warns) <- parseStaticFlags (map noLoc $ cfgGhcFlags cfg)
-      putMVar staticFlags (Just fs)
-      return fs
+{-# NOINLINE initStaticFlags #-}
+-- | Use lazy evaluation to only call 'parseStaticFlags' once.
+initStaticFlags :: [Located String]
+initStaticFlags = unsafePerformIO $ fmap fst (parseStaticFlags [])
 
 -- | Map a compilation function over each 'ModSummary' in the dependency graph
 --   of a list of targets.

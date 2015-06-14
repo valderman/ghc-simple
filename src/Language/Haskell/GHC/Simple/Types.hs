@@ -26,8 +26,8 @@ class Compile a where
 -- | GHC pipeline configuration, parameterized over the intermediate code
 --   produced by the pipeline.
 data CompConfig a = CompConfig {
-    -- | GHC command line flags to control the Haskell to STG compilation
-    --   pipeline. Both static and dynamic flags may be set here.
+    -- | GHC command line dynamic flags to control the Haskell to STG
+    --   compilation pipeline.
     --   For instance, passing @["-O2", "-DHELLO"]@ here is equivalent to
     --   passing @-O2 -DHELLO@ to the @ghc@ binary.
     --
