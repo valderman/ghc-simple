@@ -6,7 +6,6 @@ module Language.Haskell.GHC.Simple (
 
     -- * Configuration, input and output types
     module Simple.Types,
-    Compile,
     StgModule,
 
     -- * GHC re-exports for processing STG and Core
