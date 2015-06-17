@@ -163,7 +163,7 @@ compileFold cfg comp acc files = initStaticFlags `seq` do
     warns <- newIORef []
     runGhc (maybe (Just libdir) Just (cfgGhcLibDir cfg)) $ do
       (_, files2) <- setDFS cfg (discardStaticFlags (cfgGhcFlags cfg)) warns
-      ecode <- genCode ghcPipeline comp acc (files ++ files2)
+      ecode <- genCode cfg ghcPipeline comp acc (files ++ files2)
       ws <- liftIO $ readIORef warns
       case ecode of
         Right (finaldfs, code) ->
@@ -188,12 +188,13 @@ initStaticFlags = unsafePerformIO $ fmap fst (parseStaticFlags [])
 -- | Map a compilation function over each 'ModSummary' in the dependency graph
 --   of a list of targets.
 genCode :: GhcMonad m
-         => (ModSummary -> m a)
+         => CompConfig t
+         -> (ModSummary -> m a)
          -> (b -> a -> IO b)
          -> b
          -> [String]
          -> m (Either [Error] (DynFlags, b))
-genCode comp usercomp acc files = do
+genCode cfg comp usercomp acc files = do
     dfs <- getSessionDynFlags
     merrs <- handleSourceError (maybeErrors dfs) $ do
       ts <- mapM (flip guessTarget Nothing) files
@@ -210,8 +211,13 @@ genCode comp usercomp acc files = do
     -- We logged everything when we did @load@, we don't want to do it twice.
     noLog m =
       m {ms_hspp_opts = (ms_hspp_opts m) {log_action = \_ _ _ _ _ -> return ()}}
-    maybeErrors dfs =
-      return . Just . map (fromErrMsg dfs) . bagToList . srcErrorMessages
+    maybeErrors dfs
+      | cfgUseGhcErrorLogger cfg = \srcerr -> liftIO $ do
+        let msgs = srcErrorMessages srcerr
+        printBagOfErrors dfs msgs
+        return . Just . map (fromErrMsg dfs) $ bagToList msgs
+      | otherwise =
+        return . Just . map (fromErrMsg dfs) . bagToList . srcErrorMessages
 
 fromErrMsg :: DynFlags -> ErrMsg -> Error
 fromErrMsg dfs e = Error {
