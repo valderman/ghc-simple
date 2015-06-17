@@ -13,5 +13,3 @@ TODO
 
 * Caching and loading generated code on demand based on symbol (and/or module)
   dependencies.
-
-* Expose replacing primop interfaces in a non-confusing manner.
