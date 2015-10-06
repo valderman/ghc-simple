@@ -7,7 +7,9 @@ module Language.Haskell.GHC.Simple.Types (
     cfgGhcFlags, cfgUseTargetsFromFlags, cfgUpdateDynFlags, cfgGhcLibDir,
     cfgUseGhcErrorLogger, cfgCustomPrimIface, cfgGhcPipeline,
     cfgAlwaysCreateHiFiles, cfgStopPhases,
-    ncgPhases,
+
+    -- * Convenience functions for common settings combinations
+    ncgPhases, disableCodeGen,
 
     -- * Compilation results and errors
     CompiledModule (..),
@@ -130,6 +132,15 @@ defaultConfig = CompConfig {
 --   at these phases when writing a cross compiler.
 ncgPhases :: [Phase]
 ncgPhases = [CmmCpp, Cmm, As False, As True]
+
+-- | Disable any native code generation and linking.
+disableCodeGen :: CompConfig a -> CompConfig a
+disableCodeGen cfg = cfg {
+      cfgStopPhases = ncgPhases,
+      cfgUpdateDynFlags = asmTarget . cfgUpdateDynFlags cfg
+    }
+  where
+    asmTarget dfs = dfs {hscTarget = HscAsm, ghcLink = NoLink}
 
 -- | Compiler output and metadata for a given module.
 data CompiledModule a = CompiledModule {
