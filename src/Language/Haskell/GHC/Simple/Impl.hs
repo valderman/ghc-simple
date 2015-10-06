@@ -14,6 +14,7 @@ module Language.Haskell.GHC.Simple.Impl (
   ) where
 
 -- GHC scaffolding
+import BinIface
 import GHC hiding (Warning)
 import GhcMonad (liftIO)
 import HscMain
@@ -31,6 +32,9 @@ import qualified Module as M (modulePackageKey, packageKeyString, PackageKey)
 #endif
 
 import Control.Monad
+import Data.IORef
+import System.FilePath (takeDirectory)
+import System.Directory (doesFileExist, createDirectoryIfMissing)
 import Language.Haskell.GHC.Simple.Types
 
 type StgModule = CompiledModule [StgBinding]
@@ -66,22 +70,41 @@ pkgKeyString = M.packageKeyString
 -- | Compile a 'ModSummary' into a module with metadata using a custom
 --   compilation function.
 toCompiledModule :: GhcMonad m
-                 => (ModSummary -> m a)
+                 => CompConfig a
+                 -> (ModSummary -> m a)
                  -> ModSummary
                  -> m (CompiledModule a)
-toCompiledModule comp ms = do
-  code <- comp ms
-  ts <- getTargets
-  return $ CompiledModule {
-      modSummary        = ms,
-      modName           = moduleNameString $ ms_mod_name ms,
-      modPackageKey     = pkgKeyString . modulePkgKey $ ms_mod ms,
-      modIsTarget       = any (`isTargetOf` ms) ts,
-      modSourceIsHsBoot = ms_hsc_src ms == HsBootFile,
-      modSourceFile     = ml_hs_file $ ms_location ms,
-      modInterfaceFile  = ml_hi_file $ ms_location ms,
-      modCompiledModule = code
-    }
+toCompiledModule cfg comp ms = do
+    code <- comp ms
+    ts <- getTargets
+    dfs <- getSessionDynFlags
+    iface <- getModIface dfs
+    let hifile = ml_hi_file $ ms_location ms
+    when (cfgAlwaysCreateHiFiles cfg) . liftIO $ do
+      exists <- doesFileExist hifile
+      unless exists $ do
+        createDirectoryIfMissing True (takeDirectory hifile)
+        writeBinIface dfs hifile iface
+    return $ CompiledModule {
+        modSummary        = ms,
+        modName           = moduleNameString $ ms_mod_name ms,
+        modPackageKey     = pkgKeyString . modulePkgKey $ ms_mod ms,
+        modIsTarget       = any (`isTargetOf` ms) ts,
+        modSourceIsHsBoot = ms_hsc_src ms == HsBootFile,
+        modSourceFile     = ml_hs_file $ ms_location ms,
+        modInterface      = iface,
+        modInterfaceFile  = hifile,
+        modCompiledModule = code
+      }
+  where
+    getModIface dfs = do
+      env <- getSession
+      pkgIfaceTbl <- eps_PIT `fmap` liftIO (readIORef (hsc_EPS env))
+      let homePkgTbl = hsc_HPT env
+      case lookupIfaceByModule dfs homePkgTbl pkgIfaceTbl (ms_mod ms) of
+        Just mi -> return mi
+        _       -> error "Module interface does not exist!"
+
 
 -- | Is @t@ the target that corresponds to @ms@?
 isTargetOf :: Target -> ModSummary -> Bool

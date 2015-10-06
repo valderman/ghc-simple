@@ -6,6 +6,7 @@ module Language.Haskell.GHC.Simple.Types (
     defaultConfig,
     cfgGhcFlags, cfgUseTargetsFromFlags, cfgUpdateDynFlags, cfgGhcLibDir,
     cfgUseGhcErrorLogger, cfgCustomPrimIface, cfgGhcPipeline,
+    cfgAlwaysCreateHiFiles,
 
     -- * Compilation results and errors
     CompiledModule (..),
@@ -85,7 +86,19 @@ data CompConfig a = CompConfig {
     --   information about custom pipelines.
     --
     --   Default: @toCode@
-    cfgGhcPipeline :: ModSummary -> Ghc a
+    cfgGhcPipeline :: ModSummary -> Ghc a,
+
+    -- | Always ensure that the interface file indicated by the
+    --   'modInterfaceFile' field of 'CompiledModule' exists?
+    --   When compiling with @hscTarget = HscNothing@, GHC will not
+    --   automatically create module interface files.
+    --   This is undesirable if, for instance, one wants the compiler to
+    --   generate interface files as well as custom generated code, but not
+    --   invoke any standard GHC code generator such as the LLVM or NCG
+    --   generators.
+    --
+    --   Default: @True@
+    cfgAlwaysCreateHiFiles :: Bool
   }
 
 -- | Default configuration.
@@ -97,7 +110,8 @@ defaultConfig = CompConfig {
     cfgUseGhcErrorLogger   = False,
     cfgGhcLibDir           = Nothing,
     cfgCustomPrimIface     = Nothing,
-    cfgGhcPipeline         = toCode
+    cfgGhcPipeline         = toCode,
+    cfgAlwaysCreateHiFiles = True
   }
 
 -- | Compiler output and metadata for a given module.
@@ -125,6 +139,10 @@ data CompiledModule a = CompiledModule {
 
     -- | The Haskell source the module was compiled from, if any.
     modSourceFile :: Maybe FilePath,
+
+    -- | 'ModIface' structure corresponding to this module.
+    --   If 'modInterfaceFile' exists, it contains this structure.
+    modInterface :: ModIface,
 
     -- | Interface file corresponding to this module.
     modInterfaceFile :: FilePath,

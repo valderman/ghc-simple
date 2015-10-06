@@ -178,7 +178,7 @@ compileFold cfg comp acc files = initStaticFlags `seq` do
               compWarnings = ws
             }
   where
-    ghcPipeline = toCompiledModule $ cfgGhcPipeline cfg
+    ghcPipeline = toCompiledModule cfg $ cfgGhcPipeline cfg
 
 {-# NOINLINE initStaticFlags #-}
 -- | Use lazy evaluation to only call 'parseStaticFlags' once.
