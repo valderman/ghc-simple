@@ -6,7 +6,8 @@ module Language.Haskell.GHC.Simple.Types (
     defaultConfig,
     cfgGhcFlags, cfgUseTargetsFromFlags, cfgUpdateDynFlags, cfgGhcLibDir,
     cfgUseGhcErrorLogger, cfgCustomPrimIface, cfgGhcPipeline,
-    cfgAlwaysCreateHiFiles,
+    cfgAlwaysCreateHiFiles, cfgStopPhases,
+    ncgPhases,
 
     -- * Compilation results and errors
     CompiledModule (..),
@@ -17,6 +18,7 @@ module Language.Haskell.GHC.Simple.Types (
   ) where
 
 import GHC
+import DriverPhases
 import Language.Haskell.GHC.Simple.PrimIface
 
 -- | Any type we can generate intermediate code for.
@@ -80,6 +82,15 @@ data CompConfig a = CompConfig {
     cfgCustomPrimIface :: Maybe (PrimOp -> PrimOpInfo,
                                  PrimOp -> Arity -> StrictSig),
 
+    -- | Stop compilation when any of these this phases are reached,
+    --   without performing it. If you are doing custom code generation and
+    --   don't want GHC to generate any code - for instance when writing a
+    --   cross compiler - you will probably want to set this to
+    --   @ncgPhases@.
+    --
+    --   Default: @[]@
+    cfgStopPhases :: [Phase],
+
     -- | Use a custom GHC pipeline to generate intermediate code. Useful if
     --   the provided instances for @[StgBinding]@ etc. don't quite do what you
     --   want them to. See "Language.Haskell.GHC.Simple.Impl" for more
@@ -110,9 +121,15 @@ defaultConfig = CompConfig {
     cfgUseGhcErrorLogger   = False,
     cfgGhcLibDir           = Nothing,
     cfgCustomPrimIface     = Nothing,
+    cfgStopPhases          = [],
     cfgGhcPipeline         = toCode,
     cfgAlwaysCreateHiFiles = True
   }
+
+-- | Phases in which the native code generator is invoked. You want to stop
+--   at these phases when writing a cross compiler.
+ncgPhases :: [Phase]
+ncgPhases = [CmmCpp, Cmm, As False, As True]
 
 -- | Compiler output and metadata for a given module.
 data CompiledModule a = CompiledModule {

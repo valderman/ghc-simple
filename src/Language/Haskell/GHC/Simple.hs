@@ -16,6 +16,7 @@ module Language.Haskell.GHC.Simple (
     module Type, module TysPrim, module TyCon,
     module ForeignCall, module PrimOp,
     module DynFlags, module SrcLoc,
+    module DriverPhases,
     ModSummary (..), ModGuts (..),
     PkgKey,
     pkgKeyString, modulePkgKey
@@ -32,6 +33,8 @@ import SrcLoc
 import Outputable
 import Hooks
 import StaticFlags (discardStaticFlags)
+import DriverPhases
+import DriverPipeline
 
 -- Convenience re-exports for fiddling with STG
 import StgSyn
@@ -101,8 +104,10 @@ setDFS cfg flags warns = do
     -- Parse and update dynamic flags
     dfs <- getSessionDynFlags
     (dfs', files2, _dynwarns) <- parseDynamicFlags dfs (map noLoc flags)
-    let dfs'' = cfgUpdateDynFlags cfg $ dfs' {
-                    log_action = logger (log_action dfs') warns
+    let ps = cfgStopPhases cfg
+        dfs'' = cfgUpdateDynFlags cfg $ dfs' {
+                    log_action = logger (log_action dfs') warns,
+                    hooks = (hooks dfs') {runPhaseHook = Just $ phaseHook ps}
                   }
 
     -- Update prim interface hook name and cache if we're using a custom
@@ -140,6 +145,11 @@ setDFS cfg flags warns = do
           hooks = (hooks dfs) {ghcPrimIfaceHook = Just $ primIface nfo strs}
         }
       getSession >>= liftIO . fixPrimopTypes nfo strs
+
+    phaseHook stop (RealPhase p) inp _ | p `elem` stop =
+      return (RealPhase StopLn, inp)
+    phaseHook _ p inp dfs =
+      runPhase p inp dfs
 
 
 -- | Left fold over a list of compilation targets and their dependencies.
