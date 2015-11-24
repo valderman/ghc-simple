@@ -37,7 +37,7 @@ instance Intermediate [StgBinding] where
   prepare = toSimplifiedStg
 
 instance Intermediate CgGuts where
-  prepare _ = pure
+  prepare _ = return
 
 instance Intermediate CoreProgram where
   prepare ms cgguts = do

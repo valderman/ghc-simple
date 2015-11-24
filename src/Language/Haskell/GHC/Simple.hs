@@ -198,7 +198,7 @@ writeModCache cfg (CompiledModule m meta) = do
 -- | Read a module from cache file.
 readModCache :: Binary a => CompConfig -> ModMetadata -> IO (CompiledModule a)
 readModCache cfg meta = do
-    m <- decode <$> BS.readFile cachefile
+    m <- decode `fmap` BS.readFile cachefile
     return $ CompiledModule m meta
   where
     ext = cfgCacheFileExt cfg
