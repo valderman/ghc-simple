@@ -1,15 +1,10 @@
 {-# LANGUAGE FlexibleInstances, CPP, PatternGuards #-}
 -- | Lower level building blocks for custom code generation.
 module Language.Haskell.GHC.Simple.Impl (
-    Compile (..),
-    Ghc, StgModule, PkgKey,
+    Ghc, PkgKey,
     liftIO,
     toSimplifiedStg,
-    toSimplifiedCore,
-    toModGuts,
-    simplify,
-    prepare, toStgBindings,
-    toCompiledModule,
+    toModMetadata,
     modulePkgKey, pkgKeyString
   ) where
 
@@ -25,6 +20,7 @@ import StgSyn
 import CoreSyn
 import CoreToStg
 import SimplStg
+import DriverPipeline
 #if __GLASGOW_HASKELL__ < 710
 import qualified Module as M (modulePackageId, packageIdString, PackageId)
 #else
@@ -37,15 +33,16 @@ import System.FilePath (takeDirectory)
 import System.Directory (doesFileExist, createDirectoryIfMissing)
 import Language.Haskell.GHC.Simple.Types
 
-type StgModule = CompiledModule [StgBinding]
-instance Compile [StgBinding] where
-  toCode = toSimplifiedStg
+instance Intermediate [StgBinding] where
+  prepare = toSimplifiedStg
 
-instance Compile CgGuts where
-  toCode = toSimplifiedCore
+instance Intermediate CgGuts where
+  prepare _ = pure
 
-instance Compile ModGuts where
-  toCode = toModGuts
+instance Intermediate CoreProgram where
+  prepare ms cgguts = do
+    env <- hsc_env `fmap` getPipeState
+    liftIO $ prepareCore env (hsc_dflags env) ms cgguts
 
 -- | Package ID/key of a module.
 modulePkgKey :: Module -> PkgKey
@@ -67,43 +64,22 @@ modulePkgKey = M.modulePackageKey
 pkgKeyString = M.packageKeyString
 #endif
 
--- | Compile a 'ModSummary' into a module with metadata using a custom
---   compilation function.
-toCompiledModule :: GhcMonad m
-                 => CompConfig a
-                 -> (ModSummary -> m a)
-                 -> ModSummary
-                 -> m (CompiledModule a)
-toCompiledModule cfg comp ms = do
-    code <- comp ms
-    ts <- getTargets
-    dfs <- getSessionDynFlags
-    iface <- getModIface dfs
-    let hifile = ml_hi_file $ ms_location ms
-    when (cfgAlwaysCreateHiFiles cfg) . liftIO $ do
-      exists <- doesFileExist hifile
-      unless exists $ do
-        createDirectoryIfMissing True (takeDirectory hifile)
-        writeBinIface dfs hifile iface
-    return $ CompiledModule {
-        modSummary        = ms,
-        modName           = moduleNameString $ ms_mod_name ms,
-        modPackageKey     = pkgKeyString . modulePkgKey $ ms_mod ms,
-        modIsTarget       = any (`isTargetOf` ms) ts,
-        modSourceIsHsBoot = ms_hsc_src ms == HsBootFile,
-        modSourceFile     = ml_hs_file $ ms_location ms,
-        modInterface      = iface,
-        modInterfaceFile  = hifile,
-        modCompiledModule = code
-      }
-  where
-    getModIface dfs = do
-      env <- getSession
-      pkgIfaceTbl <- eps_PIT `fmap` liftIO (readIORef (hsc_EPS env))
-      let homePkgTbl = hsc_HPT env
-      case lookupIfaceByModule dfs homePkgTbl pkgIfaceTbl (ms_mod ms) of
-        Just mi -> return mi
-        _       -> error "Module interface does not exist!"
+-- | Build a 'ModMetadata' out of scattered  metadata.
+toModMetadata :: CompConfig
+              -> Bool
+              -> [Target]
+              -> ModSummary
+              -> ModMetadata
+toModMetadata cfg cached tgts ms = ModMetadata {
+    mmSummary        = ms,
+    mmName           = moduleNameString $ ms_mod_name ms,
+    mmPackageKey     = pkgKeyString . modulePkgKey $ ms_mod ms,
+    mmIsTarget       = any (`isTargetOf` ms) tgts,
+    mmSourceIsHsBoot = ms_hsc_src ms == HsBootFile,
+    mmSourceFile     = ml_hs_file $ ms_location ms,
+    mmInterfaceFile  = ml_hi_file $ ms_location ms,
+    mmCached         = cached
+  }
 
 
 -- | Is @t@ the target that corresponds to @ms@?
@@ -118,41 +94,20 @@ isTargetOf t ms =
 -- | Compile a 'ModSummary' into a list of simplified 'StgBinding's.
 --   See <https://ghc.haskell.org/trac/ghc/wiki/Commentary/Compiler/StgSynType>
 --   for more information about STG and how it relates to core and Haskell.
-toSimplifiedStg :: GhcMonad m => ModSummary -> m [StgBinding]
-toSimplifiedStg ms = do
-  dfs <- getSessionDynFlags
-  toSimplifiedCore ms >>= prepare dfs ms >>= toStgBindings dfs ms
-
--- | Compile a 'ModSummary' into a 'CgGuts', containing all information about
---   a core module that one could wish for.
-toSimplifiedCore :: GhcMonad m => ModSummary -> m CgGuts
-toSimplifiedCore = toModGuts >=> simplify
-
--- | Parse, typecheck and desugar a module. Returned 'ModGuts' structure is not
---   simplified in any way.
-toModGuts :: GhcMonad m => ModSummary -> m ModGuts
-toModGuts =
-  parseModule >=> typecheckModule >=> desugarModule >=> return . coreModule
-
--- | Simplify a core module for code generation.
-simplify :: GhcMonad m => ModGuts -> m CgGuts
-simplify mg = do
-  env <- getSession
-  liftIO $ hscSimplify env mg >>= tidyProgram env >>= return . fst
+toSimplifiedStg :: ModSummary -> CgGuts -> CompPipeline [StgBinding]
+toSimplifiedStg ms cgguts = do
+  env <- hsc_env `fmap` getPipeState
+  let dfs = hsc_dflags env
+  liftIO $ do
+    prog <- prepareCore env dfs ms cgguts
+    stg <- coreToStg dfs (ms_mod ms) prog
+    fst `fmap` stg2stg dfs (ms_mod ms) stg
 
 -- | Prepare a core module for code generation.
-prepare :: GhcMonad m => DynFlags -> ModSummary -> CgGuts -> m CoreProgram
-prepare dfs _ms p = do
-  env <- getSession
+prepareCore :: HscEnv -> DynFlags -> ModSummary -> CgGuts -> IO CoreProgram
+prepareCore env dfs _ms p = do
 #if __GLASGOW_HASKELL__ < 710
   liftIO $ corePrepPgm dfs env (cg_binds p) (cg_tycons p)
 #else
   liftIO $ corePrepPgm env (ms_location _ms) (cg_binds p) (cg_tycons p)
 #endif
-
--- | Turn a core module into a list of simplified STG bindings.
-toStgBindings :: GhcMonad m
-              => DynFlags -> ModSummary -> CoreProgram -> m [StgBinding]
-toStgBindings dfs ms p = liftIO $ do
-  stg <- coreToStg dfs (ms_mod ms) p
-  fst `fmap` stg2stg dfs (ms_mod ms) stg
