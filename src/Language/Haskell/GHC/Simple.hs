@@ -56,7 +56,6 @@ import Module
 import Data.Binary
 import qualified Data.ByteString.Lazy as BS
 import Data.IORef
-import Data.List (sort, sortBy)
 import Control.Monad
 import GHC.Paths (libdir)
 import System.Directory
@@ -169,41 +168,49 @@ setDFS cfg flags warns comp = do
       getSession >>= liftIO . fixPrimopTypes nfo strs
 
     -- TODO: get rid of the @runPhase@ from the HscOut phase
-    phaseHook _ p@(HscOut src_flavour mod_name result) inp dfs = do
-      loc <- getLocation src_flavour mod_name
+    phaseHook _ p@(HscOut src mod_name result) inp dfs = do
+      loc <- getLocation src mod_name
       setModLocation loc
-      let next = hscPostBackendPhase dfs src_flavour (hscTarget dfs)
+      let next = hscPostBackendPhase dfs src (hscTarget dfs)
       case result of
         HscRecomp cgguts ms -> do
           outfile <- phaseOutputFilename next
           comp (ml_hi_file loc) ms cgguts
-          runPhase p inp dfs -- return (RealPhase next, outfile)
+          runPhase p inp dfs
         _ ->
-          runPhase p inp dfs -- return (RealPhase next, ml_obj_file loc)
+          runPhase p inp dfs
     phaseHook stop (RealPhase p) inp _ | p `elem` stop =
       return (RealPhase StopLn, inp)
     phaseHook _ p inp dfs =
       runPhase p inp dfs
 
 -- | Write a module to cache file.
-writeModCache :: Binary a => CompConfig -> CompiledModule a -> IO ()
-writeModCache cfg (CompiledModule m meta) = do
+writeModCache :: Binary a => CompConfig -> ModSummary -> a -> IO ()
+writeModCache cfg ms m = do
     createDirectoryIfMissing True (takeDirectory cachefile)
     BS.writeFile cachefile (encode m)
   where
-    ext = cfgCacheFileExt cfg
-    modfile = moduleNameSlashes (ms_mod_name (mmSummary meta)) <.> ext
-    cachefile = maybe "" id (cfgCacheDirectory cfg) </> modfile
+    cachefile = cacheFileFor cfg (ms_mod_name ms)
 
 -- | Read a module from cache file.
-readModCache :: Binary a => CompConfig -> ModMetadata -> IO (CompiledModule a)
-readModCache cfg meta = do
+readModCache :: Binary a
+             => CompConfig
+             -> ModMetadata
+             -> [Target]
+             -> IO (CompiledModule a)
+readModCache cfg meta tgts = do
     m <- decode `fmap` BS.readFile cachefile
-    return $ CompiledModule m meta
+    return $ CompiledModule m meta (mmSummary meta `isTarget` tgts)
   where
-    ext = cfgCacheFileExt cfg
-    modfile = moduleNameSlashes (ms_mod_name (mmSummary meta)) <.> ext
-    cachefile = maybe "" id (cfgCacheDirectory cfg) </> modfile
+    cachefile = cacheFileFor cfg (ms_mod_name (mmSummary meta))
+
+-- | Get the cache file for the given 'ModSummary' under the given
+--   configuration.
+cacheFileFor :: CompConfig -> ModuleName -> FilePath
+cacheFileFor cfg name =
+    maybe "" id (cfgCacheDirectory cfg) </> modfile
+  where
+    modfile = moduleNameSlashes name <.> cfgCacheFileExt cfg
 
 -- | Left fold over a list of compilation targets and their dependencies.
 --
@@ -226,13 +233,10 @@ compileFold :: (Intermediate a, Binary b)
             --   'CompConfig', if 'cfgUseTargetsFromFlags' is set.
             -> IO (CompResult acc)
 compileFold cfg comp f acc files = initStaticFlags `seq` do
-    warns <- newIORef []     -- all warnings produced by GHC
-    accref <- newIORef acc   -- accumulator for compilation fold function
-    tgtref <- newIORef []    -- ref containing all compilation targets
-    recomp <- newIORef [] -- ref containing all modules that were recompiled
+    warns <- newIORef []  -- all warnings produced by GHC
     runGhc (maybe (Just libdir) Just (cfgGhcLibDir cfg)) $ do
-      (_, files2) <- setDFS cfg dfs warns (comp' accref recomp tgtref)
-      ecode <- genCode cfg f accref tgtref recomp (files ++ files2)
+      (_, files2) <- setDFS cfg dfs warns compileToCache
+      ecode <- genCode cfg f acc (files ++ files2)
       ws <- liftIO $ readIORef warns
       case ecode of
         Right (finaldfs, code) ->
@@ -248,19 +252,22 @@ compileFold cfg comp f acc files = initStaticFlags `seq` do
             }
   where
     dfs = discardStaticFlags (cfgGhcFlags cfg)
-    comp' accref recompref tgtref hifile ms cgguts = do
+    compileToCache hifile ms cgguts = do
       source <- prepare ms cgguts
-      liftIO $ do
-        tgts <- readIORef tgtref
-        let meta = toModMetadata cfg False tgts ms
-        code <- comp meta source
-        let cm = CompiledModule code meta
-        writeModCache cfg cm
-        -- TODO: if we already recompiled the module, we shouldn't do it
-        --       again, for instance when recompilation is forced due to
-        --       missing cache file
-        atomicModifyIORef' recompref $ \xs -> (ms_mod ms : xs, ())
-        readIORef accref >>= flip f cm >>= writeIORef accref
+      liftIO $ comp (toModMetadata cfg ms) source >>= writeModCache cfg ms
+
+-- | Is @ms@ in the list of targets?
+isTarget :: ModSummary -> [Target] -> Bool
+isTarget ms = any (`isTargetOf` ms)
+
+-- | Is @t@ the target that corresponds to @ms@?
+isTargetOf :: Target -> ModSummary -> Bool
+isTargetOf t ms =
+  case targetId t of
+    TargetModule mn                                -> ms_mod_name ms == mn
+    TargetFile fn _
+      | ModLocation (Just f) _ _ <- ms_location ms -> f == fn
+    _                                              -> False
 
 {-# NOINLINE initStaticFlags #-}
 -- | Use lazy evaluation to only call 'parseStaticFlags' once.
@@ -272,54 +279,47 @@ initStaticFlags = unsafePerformIO $ fmap fst (parseStaticFlags [])
 genCode :: (GhcMonad m, Binary b)
         => CompConfig
         -> (a -> CompiledModule b -> IO a)
-        -> IORef a
-        -> IORef [Target]
-        -> IORef [Module]
+        -> a
         -> [String]
         -> m (Either [Error] (DynFlags, a))
-genCode cfg f accref tgtref recompref files = do
+genCode cfg f acc files = do
     dfs <- getSessionDynFlags
-    merrs <- handleSourceError (maybeErrors dfs) $ do
+    eerrs <- handleSourceError (maybeErrors dfs) $ do
       ts <- mapM (flip guessTarget Nothing) files
-      liftIO $ writeIORef tgtref ts
       setTargets ts
-      loads <- load LoadAllTargets
-      mss <- depanal [] False
-      acc <- liftIO $ readIORef accref
-      recompiled <- liftIO $ readIORef recompref
-      let cachedmods = sortBy onModId mss \\ sort recompiled
-      -- TODO: if some cached mod failed to load, recompile it
-      acc' <- liftIO $ foldM (loadCachedMod ts) acc cachedmods
-      liftIO $ writeIORef accref acc'
-      return $ if succeeded loads then Nothing else Just []
-    case merrs of
-      Just errs -> return $ Left errs
-      _         -> do
-        code <- liftIO $ readIORef accref
-        return $ Right (dfs, code)
+
+      -- Compile all modules; if cached code file is gone, then force
+      -- recompilation
+      (loads, mss) <- do
+        loads <- load LoadAllTargets
+        mss <- depanal [] False
+        recomp <- filterM needRecomp mss
+        if null recomp
+          then return (loads, mss)
+          else do
+            mapM_ (liftIO . removeFile . ml_obj_file . ms_location) recomp
+            loads' <- load LoadAllTargets
+            mss' <- depanal [] False
+            return (loads', mss')
+
+      acc' <- liftIO $ foldM (loadCachedMod ts) acc mss
+      return $ if succeeded loads then Right acc' else Left []
+    case eerrs of
+      Left errs -> return $ Left errs
+      Right acc -> return $ Right (dfs, acc)
   where
-    onModId m n = ms_mod m `compare` ms_mod n
-
+    needRecomp =
+      liftIO . fmap not . doesFileExist . cacheFileFor cfg . ms_mod_name
     loadCachedMod tgts acc ms =
-      readModCache cfg (toModMetadata cfg True tgts ms) >>= f acc
-
-    -- remove all mod summaries from msmss whose mod identities exist in mmods.
-    -- both lists must be sorted.
-    (\\) :: [ModSummary] -> [Module] -> [ModSummary]
-    msmss@(ms:mss) \\ mmods@(m:mods)
-      | ms_mod ms == m = mss \\ mmods        -- ms found in mods; remove it
-      | ms_mod ms <  m = msmss \\ mods       -- ms < m; ms may still be in mods
-      | otherwise      = ms : (mss \\ mmods) -- ms > m; ms is not in mods
-    mss \\ []          = mss                 -- mods empty, keep all remaining
-    []  \\ _           = []                  -- no mss to keep!
+      readModCache cfg (toModMetadata cfg ms) tgts >>= f acc
 
     maybeErrors dfs
       | cfgUseGhcErrorLogger cfg = \srcerr -> liftIO $ do
         let msgs = srcErrorMessages srcerr
         printBagOfErrors dfs msgs
-        return . Just . map (fromErrMsg dfs) $ bagToList msgs
+        return . Left . map (fromErrMsg dfs) $ bagToList msgs
       | otherwise =
-        return . Just . map (fromErrMsg dfs) . bagToList . srcErrorMessages
+        return . Left . map (fromErrMsg dfs) . bagToList . srcErrorMessages
 
 fromErrMsg :: DynFlags -> ErrMsg -> Error
 fromErrMsg dfs e = Error {

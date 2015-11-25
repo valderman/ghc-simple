@@ -64,32 +64,18 @@ modulePkgKey = M.modulePackageKey
 pkgKeyString = M.packageKeyString
 #endif
 
--- | Build a 'ModMetadata' out of scattered  metadata.
+-- | Build a 'ModMetadata' out of a 'ModSummary'.
 toModMetadata :: CompConfig
-              -> Bool
-              -> [Target]
               -> ModSummary
               -> ModMetadata
-toModMetadata cfg cached tgts ms = ModMetadata {
+toModMetadata cfg ms = ModMetadata {
     mmSummary        = ms,
     mmName           = moduleNameString $ ms_mod_name ms,
     mmPackageKey     = pkgKeyString . modulePkgKey $ ms_mod ms,
-    mmIsTarget       = any (`isTargetOf` ms) tgts,
     mmSourceIsHsBoot = ms_hsc_src ms == HsBootFile,
     mmSourceFile     = ml_hs_file $ ms_location ms,
-    mmInterfaceFile  = ml_hi_file $ ms_location ms,
-    mmCached         = cached
+    mmInterfaceFile  = ml_hi_file $ ms_location ms
   }
-
-
--- | Is @t@ the target that corresponds to @ms@?
-isTargetOf :: Target -> ModSummary -> Bool
-isTargetOf t ms =
-  case targetId t of
-    TargetModule mn                                -> ms_mod_name ms == mn
-    TargetFile fn _
-      | ModLocation (Just f) _ _ <- ms_location ms -> f == fn
-    _                                              -> False
 
 -- | Compile a 'ModSummary' into a list of simplified 'StgBinding's.
 --   See <https://ghc.haskell.org/trac/ghc/wiki/Commentary/Compiler/StgSynType>

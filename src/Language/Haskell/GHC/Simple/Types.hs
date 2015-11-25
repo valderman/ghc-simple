@@ -143,7 +143,11 @@ data CompiledModule a = CompiledModule {
     modCompiledModule :: a,
 
     -- | Metadata for the compiled module.
-    modMetaData :: ModMetadata
+    modMetadata :: ModMetadata,
+
+    -- | Was the module a target of the current compilation, as opposed to
+    --   a dependency of some target?
+    modIsTarget :: Bool
   }
 
 -- | Metadata for a module under compilation.
@@ -162,10 +166,6 @@ data ModMetadata = ModMetadata {
     --   'stgModSummary'.
     mmPackageKey :: String,
 
-    -- | Is this module a compilation target (as opposed to a dependency of
-    --   one)?
-    mmIsTarget :: Bool,
-
     -- | Was the module compiler from a @hs-boot@ file?
     mmSourceIsHsBoot :: Bool,
 
@@ -173,11 +173,7 @@ data ModMetadata = ModMetadata {
     mmSourceFile :: Maybe FilePath,
 
     -- | Interface file corresponding to this module.
-    mmInterfaceFile :: FilePath,
-
-    -- | Was this module loaded from cache, as opposed to recompiled from
-    --   scratch?
-    mmCached :: Bool
+    mmInterfaceFile :: FilePath
   }
 
 -- | A GHC error message.
