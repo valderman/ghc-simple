@@ -220,5 +220,5 @@ data CompResult a
 
 -- | Does the given 'CompResult' represent a successful compilation?
 compSuccess :: CompResult a -> Bool
-compSuccess (Success {}) = True
-compSuccess _            = False
+compSuccess Success{} = True
+compSuccess _         = False
