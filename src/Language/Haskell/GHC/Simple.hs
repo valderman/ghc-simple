@@ -139,20 +139,43 @@ setDFS cfg flags warns comp = do
     finaldfs <- getSessionDynFlags
     return (finaldfs, map unLoc files2)
   where
+#if __GLASGOW_HASKELL__ >= 800
+#define LOG(dfs,sev,span,sty,msg) (deflog dfs reason sev span sty msg)
+    logger deflog warns dfs reason severity srcspan style msg
+#else
+#define LOG(dfs,sev,span,sty,msg) (deflog dfs sev span sty msg)
     logger deflog warns dfs severity srcspan style msg
+#endif
       | cfgUseGhcErrorLogger cfg = do
+#if __GLASGOW_HASKELL__ >= 800
+        logger' deflog warns dfs reason severity srcspan style msg
+#else
         logger' deflog warns dfs severity srcspan style msg
+#endif
         -- Messages other than warnings and errors are already logged by GHC
         -- by default.
         case severity of
-          SevWarning -> deflog dfs severity srcspan style msg
-          SevError   -> deflog dfs severity srcspan style msg
+          SevWarning -> LOG(dfs, severity, srcspan, style, msg)
+          SevError   -> LOG(dfs, severity, srcspan, style, msg)
           _          -> return ()
       | otherwise = do
+#if __GLASGOW_HASKELL__ >= 800
+        logger' deflog warns dfs reason severity srcspan style msg
+#else
         logger' deflog warns dfs severity srcspan style msg
+#endif
 
     -- Collect warnings and supress errors, since we're collecting those
     -- separately.
+#if __GLASGOW_HASKELL__ >= 800
+    logger' _ w dfs _ SevWarning srcspan _style msg = do
+      liftIO $ atomicModifyIORef' w $ \ws ->
+        (Warning srcspan (showSDoc dfs msg) : ws, ())
+    logger' _ _ _ _ SevError _ _ _ = do
+      return ()
+    logger' output _ dfs reason sev srcspan style msg = do
+      output dfs reason sev srcspan style msg
+#else
     logger' _ w dfs SevWarning srcspan _style msg = do
       liftIO $ atomicModifyIORef' w $ \ws ->
         (Warning srcspan (showSDoc dfs msg) : ws, ())
@@ -160,6 +183,7 @@ setDFS cfg flags warns comp = do
       return ()
     logger' output _ dfs sev srcspan style msg = do
       output dfs sev srcspan style msg
+#endif
 
     setPrimIface dfs nfo strs = do
       void $ setSessionDynFlags dfs {
@@ -324,8 +348,13 @@ genCode cfg f acc files = do
 fromErrMsg :: DynFlags -> ErrMsg -> Error
 fromErrMsg dfs e = Error {
     errorSpan      = errMsgSpan e,
+#if __GLASGOW_HASKELL__ >= 800
+    errorMessage   = showSDocForUser dfs ctx (pprLocErrMsg e),
+    errorExtraInfo = ""
+#else
     errorMessage   = showSDocForUser dfs ctx (errMsgShortDoc e),
     errorExtraInfo = showSDocForUser dfs ctx (errMsgExtraInfo e)
+#endif
   }
   where
     ctx = errMsgContext e
