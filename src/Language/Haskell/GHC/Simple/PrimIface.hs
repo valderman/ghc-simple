@@ -25,7 +25,13 @@ module Language.Haskell.GHC.Simple.PrimIface (
     primIface, fixPrimopTypes
   ) where
 import IfaceEnv (initNameCache)
-import PrelInfo (wiredInThings, primOpRules, ghcPrimIds)
+import PrelInfo (primOpRules, ghcPrimIds)
+#if __GLASGOW_HASKELL__ < 800
+import PrelInfo (wiredInThings)
+#else
+import PrelInfo (wiredInIds, primOpId)
+import TcTypeNats (typeNatTyCons)
+#endif
 import PrimOp hiding (primOpSig)
 import IdInfo
 import Rules
@@ -63,21 +69,34 @@ primIface nfo str = (emptyModIface gHC_PRIM) {
         mi_fix_fn = mkIfaceFixCache fixies
     }
   where
-    fixies = (getOccName seqId, Fixity 0 InfixR) :
+    fixies = (getOccName seqId, fixity "seq" 0 InfixR) :
              [(primOpOcc op, f)
              | op <- allThePrimOps
              , Just f <- [primOpFixity op]]
+#if __GLASGOW_HASKELL__ >= 800
+    fixity = Fixity
+#else
+    fixity _ = Fixity
+#endif
 
 exports :: (PrimOp -> PrimOpInfo)
         -> (PrimOp -> Arity -> StrictSig)
         -> [IfaceExport]
 exports nfo str = concat [
-    map (Avail . idName) ghcPrimIds,
-    map (Avail . idName . (fixPrimOp nfo str)) allThePrimOps,
-    [ AvailTC n [n]
+    map avail ghcPrimIds,
+    map (avail . (fixPrimOp nfo str)) allThePrimOps,
+    [ availTC n
     | tc <- funTyCon : coercibleTyCon : primTyCons, let n = tyConName tc]
   ]
-
+  where
+#if __GLASGOW_HASKELL__ >= 800
+    avail = Avail NotPatSyn . idName
+    availTC n = AvailTC n [n] []
+#else
+    avail = Avail . idName
+    availTC n = AvailTC n [n]
+#endif
+          
 -- | Fix primop types in the name cache.
 fixPrimopTypes :: (PrimOp -> PrimOpInfo)
                -> (PrimOp -> Arity -> StrictSig)
@@ -94,6 +113,27 @@ fixPrimopTypes nfo str env = do
         basicKnownKeyNames,
         map (getName . AnId . fixPrimOp nfo str) allThePrimOps
       ]
+
+#if __GLASGOW_HASKELL__ >= 800
+-- This list is used only to initialise HscMain.knownKeyNames
+-- to ensure that when you say "Prelude.map" in your source code, you
+-- get a Name with the correct known key (See Note [Known-key names])
+wiredInThings
+  = concat
+    [           -- Wired in TyCons and their implicit Ids
+          tycon_things
+        , concatMap implicitTyThings tycon_things
+
+                -- Wired in Ids
+        , map AnId wiredInIds
+
+                -- PrimOps
+        , map (AnId . primOpId) allThePrimOps
+    ]
+  where
+    tycon_things = map ATyCon ([funTyCon] ++ primTyCons ++ wiredInTyCons
+                                    ++ typeNatTyCons)
+#endif
 
 -- | Primitive operation signature: constists of the op's type, arity and
 --   strictness annotations.
@@ -130,7 +170,11 @@ data PrimOpInfo
                 Type
 
   | GenPrimOp   OccName         -- string :: \/a1..an . T1 -> .. -> Tk -> T
+#if __GLASGOW_HASKELL__ >= 800
+                [TyBinder]
+#else
                 [TyVar]
+#endif
                 [Type]
                 Type
 
@@ -147,12 +191,17 @@ fixPrimOp opnfo str op =
     unique = mkPrimOpIdUnique $ primOpTag op
     nfo    = flip setCallArityInfo (opArity sig) $
              noCafIdInfo `setStrictnessInfo` opStrictness sig
-                         `setSpecInfo` si
+                         `setRuleInfo` ri
                          `setArityInfo` opArity sig
                          `setInlinePragInfo` neverInlinePragma
-    si     = mkSpecInfo $ case primOpRules name op of
+    ri     = mkRuleInfo $ case primOpRules name op of
                             Just r -> [r]
                             _      -> []
+#if __GLASGOW_HASKELL__ < 800
+    mkRuleInfo = mkSpecInfo
+    infixl 1 `setRuleInfo`
+    setRuleInfo = setSpecInfo
+#endif
 
 -- | Create a 'PrimOpInfo' for dyadic, monadic and compare primops.
 --   Needed by GHC-generated primop info includes.
@@ -163,5 +212,9 @@ mkCompare str ty = Compare (mkVarOccFS str) ty
 
 -- | Create a general 'PrimOpInfo'. Needed by GHC-generated primop info
 --   includes.
+#if __GLASGOW_HASKELL__ >= 800
+mkGenPrimOp :: FastString -> [TyBinder] -> [Type] -> Type -> PrimOpInfo
+#else
 mkGenPrimOp :: FastString -> [TyVar] -> [Type] -> Type -> PrimOpInfo
+#endif
 mkGenPrimOp str tvs tys ty = GenPrimOp (mkVarOccFS str) tvs tys ty

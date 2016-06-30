@@ -21,10 +21,12 @@ import CoreSyn
 import CoreToStg
 import SimplStg
 import DriverPipeline
-#if __GLASGOW_HASKELL__ < 710
-import qualified Module as M (modulePackageId, packageIdString, PackageId)
-#else
+#if __GLASGOW_HASKELL__ >= 800
+import qualified Module as M (moduleUnitId, unitIdString, UnitId)
+#elif __GLASGOW_HASKELL__ >= 710
 import qualified Module as M (modulePackageKey, packageKeyString, PackageKey)
+#else
+import qualified Module as M (modulePackageId, packageIdString, PackageId)
 #endif
 
 import Control.Monad
@@ -50,18 +52,24 @@ modulePkgKey :: Module -> PkgKey
 -- | String representation of a package ID/key.
 pkgKeyString :: PkgKey -> String
 
-#if __GLASGOW_HASKELL__ < 710
--- | Synonym for 'M.PackageId', to bridge a slight incompatibility between
---   GHC 7.8 and 7.10.
-type PkgKey = M.PackageId
-modulePkgKey = M.modulePackageId
-pkgKeyString = M.packageIdString
-#else
+#if __GLASGOW_HASKELL__ >= 800
+-- | Synonym for 'M.UnitId', to bridge a slight incompatibility between
+--   GHC 7.8/7.10/8.0.
+type PkgKey = M.UnitId
+modulePkgKey = M.moduleUnitId
+pkgKeyString = M.unitIdString
+#elif __GLASGOW_HASKELL__ >= 710
 -- | Synonym for 'M.PackageKey', to bridge a slight incompatibility between
 --   GHC 7.8 and 7.10.
 type PkgKey = M.PackageKey
 modulePkgKey = M.modulePackageKey
 pkgKeyString = M.packageKeyString
+#else
+-- | Synonym for 'M.PackageId', to bridge a slight incompatibility between
+--   GHC 7.8 and 7.10.
+type PkgKey = M.PackageId
+modulePkgKey = M.modulePackageId
+pkgKeyString = M.packageIdString
 #endif
 
 -- | Build a 'ModMetadata' out of a 'ModSummary'.
@@ -92,8 +100,10 @@ toSimplifiedStg ms cgguts = do
 -- | Prepare a core module for code generation.
 prepareCore :: HscEnv -> DynFlags -> ModSummary -> CgGuts -> IO CoreProgram
 prepareCore env dfs _ms p = do
-#if __GLASGOW_HASKELL__ < 710
-  liftIO $ corePrepPgm dfs env (cg_binds p) (cg_tycons p)
-#else
+#if __GLASGOW_HASKELL__ >= 800
+  liftIO $ corePrepPgm env (ms_mod _ms) (ms_location _ms) (cg_binds p) (cg_tycons p)
+#elif __GLASGOW_HASKELL__ >= 710
   liftIO $ corePrepPgm env (ms_location _ms) (cg_binds p) (cg_tycons p)
+#else
+  liftIO $ corePrepPgm dfs env (cg_binds p) (cg_tycons p)
 #endif
