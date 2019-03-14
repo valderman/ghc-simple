@@ -31,7 +31,6 @@ import Bag
 import SrcLoc
 import Outputable
 import Hooks
-import StaticFlags (discardStaticFlags)
 import DriverPhases
 import DriverPipeline
 
@@ -108,7 +107,7 @@ getDynFlagsForConfig :: CompConfig -> IO (DynFlags, [String])
 getDynFlagsForConfig cfg = initStaticFlags `seq` do
   ws <- newIORef []
   runGhc (maybe (Just libdir) Just (cfgGhcLibDir cfg)) $ do
-    setDFS cfg (discardStaticFlags (cfgGhcFlags cfg)) ws noComp
+    setDFS cfg (cfgGhcFlags cfg) ws noComp
 
 noComp :: FilePath -> ModSummary -> CgGuts -> CompPipeline ()
 noComp _ _ _ = return ()
@@ -275,7 +274,7 @@ compileFold cfg comp f acc files = initStaticFlags `seq` do
               compWarnings = ws
             }
   where
-    dfs = discardStaticFlags (cfgGhcFlags cfg)
+    dfs = cfgGhcFlags cfg
     compileToCache hifile ms cgguts = do
       source <- prepare ms cgguts
       liftIO $ comp (toModMetadata cfg ms) source >>= writeModCache cfg ms
@@ -296,7 +295,8 @@ isTargetOf t ms =
 {-# NOINLINE initStaticFlags #-}
 -- | Use lazy evaluation to only call 'parseStaticFlags' once.
 initStaticFlags :: [Located String]
-initStaticFlags = unsafePerformIO $ fmap fst (parseStaticFlags [])
+initStaticFlags = [] -- most probably wrong
+-- initStaticFlags = unsafePerformIO $ fmap fst (parseStaticFlags [])
 
 -- | Map a compilation function over each 'ModSummary' in the dependency graph
 --   of a list of targets.
@@ -316,14 +316,14 @@ genCode cfg f acc files = do
       -- recompilation
       (loads, mss) <- do
         loads <- load LoadAllTargets
-        mss <- depanal [] False
+        mss <- mgModSummaries <$> depanal [] False
         recomp <- filterM needRecomp mss
         if null recomp
           then return (loads, mss)
           else do
             mapM_ (liftIO . removeFile . ml_obj_file . ms_location) recomp
             loads' <- load LoadAllTargets
-            mss' <- depanal [] False
+            mss' <- mgModSummaries <$> depanal [] False
             return (loads', mss')
 
       acc' <- liftIO $ foldM (loadCachedMod ts) acc mss

@@ -24,7 +24,7 @@ module Language.Haskell.GHC.Simple.PrimIface (
     mkGenPrimOp, mkDyadic, mkMonadic, mkCompare,
     primIface, fixPrimopTypes
   ) where
-import IfaceEnv (initNameCache)
+import NameCache(initNameCache, NameCache(..))
 import PrelInfo (primOpRules, ghcPrimIds)
 #if __GLASGOW_HASKELL__ < 800
 import PrelInfo (wiredInThings)
@@ -69,7 +69,7 @@ primIface nfo str = (emptyModIface gHC_PRIM) {
         mi_fix_fn = mkIfaceFixCache fixies
     }
   where
-    fixies = (getOccName seqId, fixity "seq" 0 InfixR) :
+    fixies = (getOccName seqId, fixity (SourceText "seq") 0 InfixR) :
              [(primOpOcc op, f)
              | op <- allThePrimOps
              , Just f <- [primOpFixity op]]
@@ -89,14 +89,9 @@ exports nfo str = concat [
     | tc <- funTyCon : coercibleTyCon : primTyCons, let n = tyConName tc]
   ]
   where
-#if __GLASGOW_HASKELL__ >= 800
-    avail = Avail NotPatSyn . idName
-    availTC n = AvailTC n [n] []
-#else
     avail = Avail . idName
-    availTC n = AvailTC n [n]
-#endif
-          
+    availTC n = AvailTC n [n] []
+
 -- | Fix primop types in the name cache.
 fixPrimopTypes :: (PrimOp -> PrimOpInfo)
                -> (PrimOp -> Arity -> StrictSig)
@@ -170,11 +165,7 @@ data PrimOpInfo
                 Type
 
   | GenPrimOp   OccName         -- string :: \/a1..an . T1 -> .. -> Tk -> T
-#if __GLASGOW_HASKELL__ >= 800
-                [TyBinder]
-#else
-                [TyVar]
-#endif
+                [TyVarBinder]
                 [Type]
                 Type
 
@@ -212,9 +203,5 @@ mkCompare str ty = Compare (mkVarOccFS str) ty
 
 -- | Create a general 'PrimOpInfo'. Needed by GHC-generated primop info
 --   includes.
-#if __GLASGOW_HASKELL__ >= 800
-mkGenPrimOp :: FastString -> [TyBinder] -> [Type] -> Type -> PrimOpInfo
-#else
-mkGenPrimOp :: FastString -> [TyVar] -> [Type] -> Type -> PrimOpInfo
-#endif
+mkGenPrimOp :: FastString -> [TyVarBinder] -> [Type] -> Type -> PrimOpInfo
 mkGenPrimOp str tvs tys ty = GenPrimOp (mkVarOccFS str) tvs tys ty
