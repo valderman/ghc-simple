@@ -104,7 +104,7 @@ consMod xs x = return (x:xs)
 -- | Obtain the dynamic flags and extra targets that would be used to compile
 --   anything with the given config.
 getDynFlagsForConfig :: CompConfig -> IO (DynFlags, [String])
-getDynFlagsForConfig cfg = initStaticFlags `seq` do
+getDynFlagsForConfig cfg = do
   ws <- newIORef []
   runGhc (maybe (Just libdir) Just (cfgGhcLibDir cfg)) $ do
     setDFS cfg (cfgGhcFlags cfg) ws noComp
@@ -255,7 +255,7 @@ compileFold :: (Intermediate a, Binary b)
             --   or a file name. Targets may also be read from the specified
             --   'CompConfig', if 'cfgUseTargetsFromFlags' is set.
             -> IO (CompResult acc)
-compileFold cfg comp f acc files = initStaticFlags `seq` do
+compileFold cfg comp f acc files = do
     warns <- newIORef []  -- all warnings produced by GHC
     runGhc (maybe (Just libdir) Just (cfgGhcLibDir cfg)) $ do
       (_, files2) <- setDFS cfg dfs warns compileToCache
@@ -291,12 +291,6 @@ isTargetOf t ms =
     TargetFile fn _
       | ModLocation (Just f) _ _ <- ms_location ms -> f == fn
     _                                              -> False
-
-{-# NOINLINE initStaticFlags #-}
--- | Use lazy evaluation to only call 'parseStaticFlags' once.
-initStaticFlags :: [Located String]
-initStaticFlags = [] -- most probably wrong
--- initStaticFlags = unsafePerformIO $ fmap fst (parseStaticFlags [])
 
 -- | Map a compilation function over each 'ModSummary' in the dependency graph
 --   of a list of targets.
