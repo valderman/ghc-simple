@@ -35,7 +35,7 @@ import System.FilePath (takeDirectory)
 import System.Directory (doesFileExist, createDirectoryIfMissing)
 import Language.Haskell.GHC.Simple.Types
 
-instance Intermediate [StgBinding] where
+instance Intermediate [StgTopBinding] where
   prepare = toSimplifiedStg
 
 instance Intermediate CgGuts where
@@ -88,20 +88,20 @@ toModMetadata cfg ms = ModMetadata {
 -- | Compile a 'ModSummary' into a list of simplified 'StgBinding's.
 --   See <https://ghc.haskell.org/trac/ghc/wiki/Commentary/Compiler/StgSynType>
 --   for more information about STG and how it relates to core and Haskell.
-toSimplifiedStg :: ModSummary -> CgGuts -> CompPipeline [StgBinding]
+toSimplifiedStg :: ModSummary -> CgGuts -> CompPipeline [StgTopBinding]
 toSimplifiedStg ms cgguts = do
   env <- hsc_env `fmap` getPipeState
   let dfs = hsc_dflags env
   liftIO $ do
     prog <- prepareCore env dfs ms cgguts
-    stg <- coreToStg dfs (ms_mod ms) prog
-    fst `fmap` stg2stg dfs (ms_mod ms) stg
+    let stg = fst $ coreToStg dfs (ms_mod ms) prog
+    stg2stg dfs stg
 
 -- | Prepare a core module for code generation.
 prepareCore :: HscEnv -> DynFlags -> ModSummary -> CgGuts -> IO CoreProgram
 prepareCore env dfs _ms p = do
 #if __GLASGOW_HASKELL__ >= 800
-  liftIO $ corePrepPgm env (ms_mod _ms) (ms_location _ms) (cg_binds p) (cg_tycons p)
+  liftIO $ fst <$> corePrepPgm env (ms_mod _ms) (ms_location _ms) (cg_binds p) (cg_tycons p)
 #elif __GLASGOW_HASKELL__ >= 710
   liftIO $ corePrepPgm env (ms_location _ms) (cg_binds p) (cg_tycons p)
 #else

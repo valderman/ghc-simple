@@ -31,7 +31,6 @@ import Bag
 import SrcLoc
 import Outputable
 import Hooks
-import StaticFlags (discardStaticFlags)
 import DriverPhases
 import DriverPipeline
 
@@ -105,10 +104,10 @@ consMod xs x = return (x:xs)
 -- | Obtain the dynamic flags and extra targets that would be used to compile
 --   anything with the given config.
 getDynFlagsForConfig :: CompConfig -> IO (DynFlags, [String])
-getDynFlagsForConfig cfg = initStaticFlags `seq` do
+getDynFlagsForConfig cfg = do
   ws <- newIORef []
   runGhc (maybe (Just libdir) Just (cfgGhcLibDir cfg)) $ do
-    setDFS cfg (discardStaticFlags (cfgGhcFlags cfg)) ws noComp
+    setDFS cfg (cfgGhcFlags cfg) ws noComp
 
 noComp :: FilePath -> ModSummary -> CgGuts -> CompPipeline ()
 noComp _ _ _ = return ()
@@ -256,7 +255,7 @@ compileFold :: (Intermediate a, Binary b)
             --   or a file name. Targets may also be read from the specified
             --   'CompConfig', if 'cfgUseTargetsFromFlags' is set.
             -> IO (CompResult acc)
-compileFold cfg comp f acc files = initStaticFlags `seq` do
+compileFold cfg comp f acc files = do
     warns <- newIORef []  -- all warnings produced by GHC
     runGhc (maybe (Just libdir) Just (cfgGhcLibDir cfg)) $ do
       (_, files2) <- setDFS cfg dfs warns compileToCache
@@ -275,7 +274,7 @@ compileFold cfg comp f acc files = initStaticFlags `seq` do
               compWarnings = ws
             }
   where
-    dfs = discardStaticFlags (cfgGhcFlags cfg)
+    dfs = cfgGhcFlags cfg
     compileToCache hifile ms cgguts = do
       source <- prepare ms cgguts
       liftIO $ comp (toModMetadata cfg ms) source >>= writeModCache cfg ms
@@ -292,11 +291,6 @@ isTargetOf t ms =
     TargetFile fn _
       | ModLocation (Just f) _ _ <- ms_location ms -> f == fn
     _                                              -> False
-
-{-# NOINLINE initStaticFlags #-}
--- | Use lazy evaluation to only call 'parseStaticFlags' once.
-initStaticFlags :: [Located String]
-initStaticFlags = unsafePerformIO $ fmap fst (parseStaticFlags [])
 
 -- | Map a compilation function over each 'ModSummary' in the dependency graph
 --   of a list of targets.
@@ -316,14 +310,14 @@ genCode cfg f acc files = do
       -- recompilation
       (loads, mss) <- do
         loads <- load LoadAllTargets
-        mss <- depanal [] False
+        mss <- mgModSummaries <$> depanal [] False
         recomp <- filterM needRecomp mss
         if null recomp
           then return (loads, mss)
           else do
             mapM_ (liftIO . removeFile . ml_obj_file . ms_location) recomp
             loads' <- load LoadAllTargets
-            mss' <- depanal [] False
+            mss' <- mgModSummaries <$> depanal [] False
             return (loads', mss')
 
       acc' <- liftIO $ foldM (loadCachedMod ts) acc mss
