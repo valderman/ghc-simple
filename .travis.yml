@@ -2,3 +2,4 @@ language: haskell
 
 ghc:
   - 8.4.4
+  - 8.6.3
